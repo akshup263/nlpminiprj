@@ -1,0 +1,122 @@
+import os
+import re
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import nltk
+from nltk.corpus import stopwords
+from nltk.stem import PorterStemmer
+import logging
+
+
+# Setup logging
+logging.basicConfig(filename='plagiarism_log.txt', level=logging.INFO, format='%(asctime)s - %(message)s')
+
+nltk.download('stopwords')
+stop_words = set(stopwords.words('english'))
+stemmer = PorterStemmer()
+
+# Preprocessing function
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(r'[^a-z\s]', '', text)
+    tokens = text.split()
+    filtered = [stemmer.stem(word) for word in tokens if word not in stop_words]
+    return ' '.join(filtered)
+
+# Read and preprocess documents
+def read_and_preprocess(folder_path):
+    file_names = []
+    raw_docs = []
+    processed_docs = []
+
+    for file in os.listdir(folder_path):
+        if file.endswith(".txt"):
+            path = os.path.join(folder_path, file)
+            with open(path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                raw_docs.append(content)
+                file_names.append(file)
+                processed_docs.append(preprocess(content))
+    return file_names, raw_docs, processed_docs
+
+# Create similarity matrix
+def create_similarity_matrix(processed_docs):
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(processed_docs)
+    return cosine_similarity(tfidf_matrix)
+
+# Build similarity dataframe
+def build_similarity_df(file_names, sim_matrix):
+    df = pd.DataFrame(sim_matrix, index=file_names, columns=file_names)
+    return df.round(2)
+
+# Generate plagiarism report
+def generate_report(file_names, sim_matrix, threshold=0.7):
+    records = []
+    for i in range(len(file_names)):
+        for j in range(i + 1, len(file_names)):
+            score = sim_matrix[i][j]
+            if score >= threshold:
+                records.append({
+                    'File 1': file_names[i],
+                    'File 2': file_names[j],
+                    'Similarity (%)': round(score * 100, 2)
+                })
+    return pd.DataFrame(records)
+
+# Plot similarity graph
+def plot_similarity(sim_matrix, file_names):
+    pairs = []
+    scores = []
+    for i in range(len(file_names)):
+        for j in range(i + 1, len(file_names)):
+            pairs.append(f"{file_names[i]} vs {file_names[j]}")
+            scores.append(sim_matrix[i][j] * 100)
+
+    plt.figure(figsize=(10, 6))
+    plt.barh(pairs, scores, color='lightcoral')
+    plt.xlabel("Similarity (%)")
+    plt.title("Plagiarism Report")
+    plt.tight_layout()
+    plt.show()
+
+# GUI to select folder and run detection
+def run_gui():
+    def browse_folder():
+        folder_path = filedialog.askdirectory()
+        if folder_path:
+            try:
+                file_names, raw_docs, processed_docs = read_and_preprocess(folder_path)
+                sim_matrix = create_similarity_matrix(processed_docs)
+                similarity_df = build_similarity_df(file_names, sim_matrix)
+                report_df = generate_report(file_names, sim_matrix)
+
+                similarity_df.to_csv("similarity_matrix.csv")
+                report_df.to_csv("plagiarism_report.csv", index=False)
+                logging.info("Reports generated for folder: %s", folder_path)
+
+                messagebox.showinfo("Success", "Reports generated and saved.")
+                plot_similarity(sim_matrix, file_names)
+            except Exception as e:
+                logging.error("Error during processing: %s", str(e))
+                messagebox.showerror("Error", f"An error occurred: {str(e)}")
+
+    root = tk.Tk()
+    root.title("Plagiarism Detection System")
+    root.geometry("400x200")
+
+    label = tk.Label(root, text="Plagiarism Detection System", font=("Helvetica", 14))
+    label.pack(pady=20)
+
+    button = tk.Button(root, text="Select Folder and Detect", command=browse_folder, bg='lightblue')
+    button.pack(pady=10)
+
+    root.mainloop()
+
+if __name__ == "__main__":
+    run_gui()
